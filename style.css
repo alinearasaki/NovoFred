@@ -1,6 +1,10 @@
 * { box-sizing: border-box; }
-body {
+html, body {
+  height: 100%;
   margin: 0;
+  overflow: hidden;
+}
+body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: #f6ede3;
   color: #3a2f28;
@@ -9,23 +13,26 @@ body {
   max-width: 480px;
   margin: 0 auto;
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   background: #fffaf3;
   box-shadow: 0 0 20px rgba(0,0,0,0.06);
+  overflow: hidden;
 }
 header {
-  padding: 16px;
+  padding: 8px 14px;
   border-bottom: 1px solid #f0e4d6;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
-header h1 { font-size: 1.25rem; margin: 0; }
-.headerBtns { display: flex; align-items: center; gap: 8px; }
+header h1 { font-size: 0.98rem; margin: 0; }
+.headerBtns { display: flex; align-items: center; gap: 5px; }
 .toggle {
-  font-size: 0.72rem;
-  padding: 6px 10px;
+  font-size: 0.62rem;
+  padding: 4px 7px;
   border-radius: 20px;
   border: 1px solid #e0cdb8;
   background: #fff;
@@ -41,25 +48,26 @@ header h1 { font-size: 1.25rem; margin: 0; }
   border: 1px solid #e0cdb8;
   background: #fff;
   border-radius: 14px;
-  padding: 6px 10px;
+  padding: 4px 7px;
   cursor: pointer;
-  font-size: 0.72rem;
+  font-size: 0.62rem;
   color: #7a6a5b;
 }
 .chat {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 16px;
+  padding: 8px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 7px;
 }
 .bubble {
   max-width: 80%;
-  padding: 10px 14px;
+  padding: 7px 12px;
   border-radius: 16px;
-  line-height: 1.4;
-  font-size: 0.95rem;
+  line-height: 1.35;
+  font-size: 0.88rem;
   white-space: pre-wrap;
 }
 .bubble.user {
@@ -73,43 +81,48 @@ header h1 { font-size: 1.25rem; margin: 0; }
   border-bottom-left-radius: 4px;
 }
 .status {
-  padding: 0 16px;
-  min-height: 18px;
-  font-size: 0.75rem;
+  padding: 0 14px;
+  min-height: 13px;
+  font-size: 0.68rem;
   color: #999;
+  flex-shrink: 0;
 }
 .inputRow {
   display: flex;
-  gap: 8px;
-  padding: 12px;
+  gap: 7px;
+  padding: 8px 10px;
   border-top: 1px solid #eee;
+  flex-shrink: 0;
 }
 .inputRow input {
   flex: 1;
-  padding: 12px 14px;
+  padding: 8px 13px;
   border-radius: 24px;
   border: 1px solid #e0cdb8;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  min-width: 0;
 }
 .sendBtn {
   border: none;
   border-radius: 24px;
-  padding: 0 18px;
+  padding: 0 14px;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 0.9rem;
   background: #b5652f;
   color: #fff;
+  flex-shrink: 0;
 }
 .micBtn {
   border: none;
   border-radius: 50%;
-  width: 48px;
-  height: 48px;
-  min-width: 48px;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 0.9rem;
   background: #b5652f;
   color: #fff;
+  flex-shrink: 0;
 }
 .micBtn.recording {
   background: #e08a4a;
