@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fred</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Fred</h1>
+      <div class="headerBtns">
+        <button id="handsFreeBtn" class="toggle">Maos-livres: desligado</button>
+        <button id="resetBtn" class="reset" title="Comecar uma conversa nova">Reiniciar</button>
+      </div>
+    </header>
+
+    <div id="chat" class="chat"></div>
+
+    <div id="status" class="status"></div>
+
+    <form id="form" class="inputRow">
+      <button type="button" id="micBtn" class="micBtn" title="Falar">Mic</button>
+      <input id="input" type="text" placeholder="Escreva algo..." autocomplete="off" />
+      <button type="submit" class="sendBtn">Enviar</button>
+    </form>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
