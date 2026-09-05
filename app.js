@@ -11,9 +11,10 @@ const MENSAGEM_ABERTURA = 'Oi. Quer conversar um pouco?';
 
 let history = [];
 let handsFree = false;
-let recognition = null;
-let recognizing = false;
-let travouTimeout = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let recording = false;
+let maxRecTimeout = null;
 
 function addBubble(role, text) {
   const div = document.createElement('div');
@@ -59,7 +60,7 @@ resetBtn.addEventListener('click', () => {
 iniciarConversa();
 
 async function sendMessage(texto) {
-  if (!texto.trim()) return;
+  if (!texto || !texto.trim()) return;
   addBubble('user', texto);
   history.push({ role: 'user', content: texto });
   salvarMemoria();
@@ -98,7 +99,7 @@ async function falar(texto) {
     });
     if (!resp.ok) {
       setStatus('');
-      if (handsFree) iniciarEscuta();
+      if (handsFree) iniciarGravacao();
       return;
     }
     const blob = await resp.blob();
@@ -107,12 +108,12 @@ async function falar(texto) {
     setStatus('Falando...');
     audio.onended = () => {
       setStatus('');
-      if (handsFree) iniciarEscuta();
+      if (handsFree) iniciarGravacao();
     };
     await audio.play();
   } catch (err) {
     setStatus('');
-    if (handsFree) iniciarEscuta();
+    if (handsFree) iniciarGravacao();
   }
 }
 
@@ -121,55 +122,79 @@ formEl.addEventListener('submit', (e) => {
   sendMessage(inputEl.value);
 });
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-function pararEscuta() {
-  if (travouTimeout) { clearTimeout(travouTimeout); travouTimeout = null; }
-  recognizing = false;
-  micBtn.classList.remove('recording');
-}
-
-function iniciarEscuta() {
-  if (!SpeechRecognition) {
-    setStatus('Seu navegador nao suporta reconhecimento de voz. Use texto ou tente no Chrome.');
+async function iniciarGravacao() {
+  if (recording) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('Seu navegador nao permite usar o microfone aqui.');
     return;
   }
-  if (recognizing) return;
-  recognition = new SpeechRecognition();
-  recognition.lang = 'pt-BR';
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-
-  recognition.onstart = () => {
-    recognizing = true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm')) ? 'audio/webm' :
+                      ((window.MediaRecorder && MediaRecorder.isTypeSupported('audio/mp4')) ? 'audio/mp4' : '');
+    mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    audioChunks = [];
+    recording = true;
     micBtn.classList.add('recording');
-    setStatus('Ouvindo...');
-    travouTimeout = setTimeout(() => {
-      try { recognition.stop(); } catch (e) {}
-      pararEscuta();
+    setStatus('Ouvindo... toque no microfone de novo pra enviar');
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    };
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      recording = false;
+      micBtn.classList.remove('recording');
+      if (maxRecTimeout) { clearTimeout(maxRecTimeout); maxRecTimeout = null; }
+      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      if (blob.size < 500) {
+        setStatus('');
+        return;
+      }
+      enviarAudio(blob);
+    };
+
+    mediaRecorder.start();
+    maxRecTimeout = setTimeout(() => {
+      if (recording && mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+    }, 30000);
+  } catch (err) {
+    setStatus('Nao consegui acessar o microfone. Confirma se voce permitiu o acesso.');
+  }
+}
+
+function pararGravacao() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+}
+
+async function enviarAudio(blob) {
+  setStatus('Transcrevendo...');
+  try {
+    const resp = await fetch('/api/transcribe', {
+      method: 'POST',
+      headers: { 'content-type': blob.type || 'audio/webm' },
+      body: blob
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.texto || !data.texto.trim()) {
       setStatus('Nao consegui te ouvir direito. Tenta falar de novo.');
-    }, 10000);
-  };
-  recognition.onresult = (event) => {
-    pararEscuta();
-    const texto = event.results[0][0].transcript;
-    sendMessage(texto);
-  };
-  recognition.onerror = () => {
-    pararEscuta();
-    setStatus('');
-  };
-  recognition.onend = () => {
-    pararEscuta();
-  };
-  recognition.start();
+      return;
+    }
+    sendMessage(data.texto);
+  } catch (err) {
+    setStatus('Nao consegui transcrever. Tenta de novo.');
+  }
 }
 
 micBtn.addEventListener('click', () => {
-  if (recognizing) {
-    recognition.stop();
+  if (recording) {
+    pararGravacao();
   } else {
-    iniciarEscuta();
+    iniciarGravacao();
   }
 });
 
@@ -178,8 +203,8 @@ handsFreeBtn.addEventListener('click', () => {
   handsFreeBtn.textContent = 'Maos-livres: ' + (handsFree ? 'ligado' : 'desligado');
   handsFreeBtn.classList.toggle('on', handsFree);
   if (handsFree) {
-    iniciarEscuta();
-  } else if (recognizing) {
-    recognition.stop();
+    iniciarGravacao();
+  } else if (recording) {
+    pararGravacao();
   }
 });
