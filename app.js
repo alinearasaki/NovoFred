@@ -12,7 +12,6 @@ const MENSAGEM_ABERTURA = 'Oi. Quer conversar um pouco?';
 let history = [];
 let handsFree = false;
 
-// --- Audio de saida (destrava no iPhone/Safari) ---
 const audioPlayer = new Audio();
 let audioUnlocked = false;
 function unlockAudio() {
@@ -24,13 +23,14 @@ function unlockAudio() {
 document.addEventListener('click', unlockAudio, { once: true });
 document.addEventListener('touchend', unlockAudio, { once: true });
 
-// --- Gravacao de voz (entrada) ---
 let mediaRecorder = null;
 let audioChunks = [];
 let currentStream = null;
+let currentAudioCtx = null;
 let recording = false;
 let maxRecTimeout = null;
 let watchdogTimeout = null;
+let silenceRAF = null;
 
 function addBubble(role, text) {
   const div = document.createElement('div');
@@ -120,6 +120,7 @@ async function falar(texto) {
     }
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
+    audioPlayer.pause();
     audioPlayer.src = url;
     setStatus('Falando...');
     audioPlayer.onended = () => {
@@ -138,36 +139,55 @@ formEl.addEventListener('submit', (e) => {
   sendMessage(inputEl.value);
 });
 
-function limparGravacao() {
+// No iOS, fechar e reabrir o microfone (getUserMedia) a cada gravacao faz o
+// Safari nao reativar a captura de audio direito na vez seguinte (o stream
+// "abre" mas fica mudo). Por isso, no modo maos-livres, mantemos o MESMO
+// stream e o MESMO AudioContext abertos entre uma gravacao e outra, e so
+// fechamos de vez quando o maos-livres e desligado (ou da erro real).
+function limparGravacao(fecharStream) {
   if (maxRecTimeout) { clearTimeout(maxRecTimeout); maxRecTimeout = null; }
   if (watchdogTimeout) { clearTimeout(watchdogTimeout); watchdogTimeout = null; }
-  if (currentStream) {
-    try { currentStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
-    currentStream = null;
-  }
+  if (silenceRAF) { cancelAnimationFrame(silenceRAF); silenceRAF = null; }
   mediaRecorder = null;
   recording = false;
   micBtn.classList.remove('recording');
+
+  if (fecharStream) {
+    if (currentAudioCtx) {
+      try { currentAudioCtx.close(); } catch (e) {}
+      currentAudioCtx = null;
+    }
+    if (currentStream) {
+      try { currentStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+      currentStream = null;
+    }
+  }
 }
 
 async function iniciarGravacao() {
   if (recording) return;
-  limparGravacao();
+  limparGravacao(false);
   unlockAudio();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     setStatus('Seu navegador nao permite usar o microfone aqui.');
     return;
   }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    currentStream = stream;
+    // Reaproveita o microfone ja aberto (se ainda estiver ativo) em vez de
+    // pedir um novo a cada gravacao - isso e o que resolve o problema no iOS.
+    let stream = currentStream;
+    const streamMorto = !stream || stream.getAudioTracks().every((t) => t.readyState === 'ended');
+    if (streamMorto) {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      currentStream = stream;
+    }
     const mimeType = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm')) ? 'audio/webm' :
                       ((window.MediaRecorder && MediaRecorder.isTypeSupported('audio/mp4')) ? 'audio/mp4' : '');
     mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
     audioChunks = [];
     recording = true;
     micBtn.classList.add('recording');
-    setStatus('Ouvindo... toque no microfone de novo pra enviar');
+    setStatus('Ouvindo...');
 
     mediaRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) audioChunks.push(e.data);
@@ -175,7 +195,9 @@ async function iniciarGravacao() {
     mediaRecorder.onstop = () => {
       const tipo = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
       const blob = new Blob(audioChunks, { type: tipo });
-      limparGravacao();
+      // so fecha o stream de vez se o maos-livres estiver desligado;
+      // se estiver ligado, mantem o microfone aberto pra proxima escuta
+      limparGravacao(!handsFree);
       if (blob.size < 500) {
         setStatus('');
         return;
@@ -183,11 +205,58 @@ async function iniciarGravacao() {
       enviarAudio(blob);
     };
     mediaRecorder.onerror = () => {
-      limparGravacao();
+      limparGravacao(true);
       setStatus('Deu erro no microfone. Tenta de novo.');
     };
 
     mediaRecorder.start();
+
+    try {
+      // Reaproveita o AudioContext ja existente (se ainda estiver rodando)
+      // em vez de fechar e criar um novo a cada gravacao.
+      let audioCtx = currentAudioCtx;
+      if (!audioCtx || audioCtx.state === 'closed') {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContextClass();
+        currentAudioCtx = audioCtx;
+      }
+      if (audioCtx.state !== 'running' && audioCtx.resume) {
+        await audioCtx.resume().catch(() => {});
+      }
+      if (audioCtx.state === 'running') {
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const inicioGravacao = Date.now();
+        let ultimoSom = Date.now();
+        const LIMIAR = 10;
+        const SILENCIO_MS = 1600;
+        const MIN_GRAVACAO_MS = 1200;
+
+        const checarSilencio = () => {
+          if (!recording) return;
+          analyser.getByteFrequencyData(dataArray);
+          let soma = 0;
+          for (let i = 0; i < dataArray.length; i++) soma += dataArray[i];
+          const media = soma / dataArray.length;
+          if (media > LIMIAR) ultimoSom = Date.now();
+          const agora = Date.now();
+          if (agora - inicioGravacao > MIN_GRAVACAO_MS && agora - ultimoSom > SILENCIO_MS) {
+            pararGravacao();
+            return;
+          }
+          silenceRAF = requestAnimationFrame(checarSilencio);
+        };
+        silenceRAF = requestAnimationFrame(checarSilencio);
+      }
+      // se o audioCtx nao rodar (comum em auto-restart no iOS), seguimos sem
+      // parada automatica - o limite de 30s abaixo garante que nao fica preso.
+    } catch (e) {
+      // se o navegador nao suportar analise de audio, so seguimos sem parada automatica
+    }
+
     maxRecTimeout = setTimeout(() => {
       if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
@@ -195,12 +264,12 @@ async function iniciarGravacao() {
     }, 30000);
     watchdogTimeout = setTimeout(() => {
       if (recording) {
-        limparGravacao();
+        limparGravacao(true);
         setStatus('O microfone travou. Toca de novo pra tentar.');
       }
     }, 35000);
   } catch (err) {
-    limparGravacao();
+    limparGravacao(true);
     setStatus('Nao consegui acessar o microfone. Confirma se voce permitiu o acesso.');
   }
 }
@@ -209,7 +278,7 @@ function pararGravacao() {
   if (mediaRecorder && mediaRecorder.state === 'recording') {
     mediaRecorder.stop();
   } else {
-    limparGravacao();
+    limparGravacao(!handsFree);
   }
 }
 
