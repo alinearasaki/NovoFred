@@ -11,10 +11,26 @@ const MENSAGEM_ABERTURA = 'Oi. Quer conversar um pouco?';
 
 let history = [];
 let handsFree = false;
+
+// --- Audio de saida (destrava no iPhone/Safari) ---
+const audioPlayer = new Audio();
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  audioPlayer.play().catch(() => {});
+  audioPlayer.pause();
+}
+document.addEventListener('click', unlockAudio, { once: true });
+document.addEventListener('touchend', unlockAudio, { once: true });
+
+// --- Gravacao de voz (entrada) ---
 let mediaRecorder = null;
 let audioChunks = [];
+let currentStream = null;
 let recording = false;
 let maxRecTimeout = null;
+let watchdogTimeout = null;
 
 function addBubble(role, text) {
   const div = document.createElement('div');
@@ -104,13 +120,13 @@ async function falar(texto) {
     }
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
+    audioPlayer.src = url;
     setStatus('Falando...');
-    audio.onended = () => {
+    audioPlayer.onended = () => {
       setStatus('');
       if (handsFree) iniciarGravacao();
     };
-    await audio.play();
+    await audioPlayer.play();
   } catch (err) {
     setStatus('');
     if (handsFree) iniciarGravacao();
@@ -122,14 +138,29 @@ formEl.addEventListener('submit', (e) => {
   sendMessage(inputEl.value);
 });
 
+function limparGravacao() {
+  if (maxRecTimeout) { clearTimeout(maxRecTimeout); maxRecTimeout = null; }
+  if (watchdogTimeout) { clearTimeout(watchdogTimeout); watchdogTimeout = null; }
+  if (currentStream) {
+    try { currentStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    currentStream = null;
+  }
+  mediaRecorder = null;
+  recording = false;
+  micBtn.classList.remove('recording');
+}
+
 async function iniciarGravacao() {
   if (recording) return;
+  limparGravacao();
+  unlockAudio();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     setStatus('Seu navegador nao permite usar o microfone aqui.');
     return;
   }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    currentStream = stream;
     const mimeType = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm')) ? 'audio/webm' :
                       ((window.MediaRecorder && MediaRecorder.isTypeSupported('audio/mp4')) ? 'audio/mp4' : '');
     mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
@@ -142,32 +173,43 @@ async function iniciarGravacao() {
       if (e.data && e.data.size > 0) audioChunks.push(e.data);
     };
     mediaRecorder.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      recording = false;
-      micBtn.classList.remove('recording');
-      if (maxRecTimeout) { clearTimeout(maxRecTimeout); maxRecTimeout = null; }
-      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      const tipo = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
+      const blob = new Blob(audioChunks, { type: tipo });
+      limparGravacao();
       if (blob.size < 500) {
         setStatus('');
         return;
       }
       enviarAudio(blob);
     };
+    mediaRecorder.onerror = () => {
+      limparGravacao();
+      setStatus('Deu erro no microfone. Tenta de novo.');
+    };
 
     mediaRecorder.start();
     maxRecTimeout = setTimeout(() => {
-      if (recording && mediaRecorder && mediaRecorder.state !== 'inactive') {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
       }
     }, 30000);
+    watchdogTimeout = setTimeout(() => {
+      if (recording) {
+        limparGravacao();
+        setStatus('O microfone travou. Toca de novo pra tentar.');
+      }
+    }, 35000);
   } catch (err) {
+    limparGravacao();
     setStatus('Nao consegui acessar o microfone. Confirma se voce permitiu o acesso.');
   }
 }
 
 function pararGravacao() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
     mediaRecorder.stop();
+  } else {
+    limparGravacao();
   }
 }
 
@@ -191,6 +233,7 @@ async function enviarAudio(blob) {
 }
 
 micBtn.addEventListener('click', () => {
+  unlockAudio();
   if (recording) {
     pararGravacao();
   } else {
@@ -199,6 +242,7 @@ micBtn.addEventListener('click', () => {
 });
 
 handsFreeBtn.addEventListener('click', () => {
+  unlockAudio();
   handsFree = !handsFree;
   handsFreeBtn.textContent = 'Maos-livres: ' + (handsFree ? 'ligado' : 'desligado');
   handsFreeBtn.classList.toggle('on', handsFree);
