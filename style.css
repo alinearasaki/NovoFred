@@ -29,6 +29,18 @@ header {
   flex-shrink: 0;
 }
 header h1 { font-size: 0.98rem; margin: 0; }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
 .headerBtns { display: flex; align-items: center; gap: 5px; }
 .toggle {
   font-size: 0.62rem;
